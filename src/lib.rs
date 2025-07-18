@@ -13,3 +13,17 @@ impl fmt::Display for Source {
         write!(f, "{}", self.to_possible_value().unwrap().get_name())
     }
 }
+
+/// Image format (and file extension) to save images as.
+#[derive(Default, Clone, Copy, PartialEq, ValueEnum)]
+pub enum ImageFormat {
+    #[default]
+    Gif,
+    Png,
+}
+
+impl fmt::Display for ImageFormat {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_possible_value().unwrap().get_name())
+    }
+}

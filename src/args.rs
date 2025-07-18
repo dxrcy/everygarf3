@@ -1,9 +1,7 @@
-use std::fmt;
 use std::num::NonZero;
 use std::path::PathBuf;
 
-use clap::ValueEnum;
-use everygarf::Source;
+use everygarf::{ImageFormat, Source};
 
 pub mod defaults {
     use std::num::NonZero;
@@ -16,6 +14,8 @@ pub mod defaults {
 
     pub const CACHE: &str = "https://raw.githubusercontent.com/dxrcy/everygarf-cache/master/cache";
     pub const PROXY: &str = "https://proxy.darcy-700.workers.dev/cors-proxy";
+
+    pub const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36";
 }
 
 #[derive(clap::Parser)]
@@ -67,27 +67,15 @@ pub struct Args {
     #[arg(long = "save-cache")]
     pub save_cache: Option<PathBuf>,
 
+    #[arg(short = 'u', long = "user-agent", default_value_t = defaults::USER_AGENT.to_string())]
+    pub user_agent: String,
+
     #[arg(short = 'S', long = "source", requires = "no_cache", default_value_t = Default::default())]
     pub source: Source,
 
     #[arg(short = 'f', long = "format", ignore_case = true, default_value_t = Default::default())]
-    pub format: ImageFormat,
+    pub image_format: ImageFormat,
 
     #[arg(short = 'q', long = "query")]
     pub query: bool,
-}
-
-/// Image format (and file extension) to save images as.
-#[derive(Default, Clone, Copy, PartialEq, ValueEnum)]
-pub enum ImageFormat {
-    #[default]
-    Gif,
-    Png,
-    Jpg,
-}
-
-impl fmt::Display for ImageFormat {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.to_possible_value().unwrap().get_name())
-    }
 }
