@@ -4,9 +4,6 @@ version = "3.0.0-alpha1"
 edition = "2024"
 
 [dependencies]
-# Logging
-tracing = "0.1.41"
-tracing-subscriber = { version = "0.3.19", features = ["fmt"] }
 # Async
 tokio = { version = "1.46.1", features = ["macros", "rt-multi-thread"] }
 futures = "0.3.31"

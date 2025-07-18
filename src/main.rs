@@ -9,21 +9,14 @@ use chrono::{Duration, NaiveDate, NaiveTime, Utc};
 use clap::Parser;
 use futures::StreamExt;
 use tokio::runtime::Runtime;
-use tracing::info;
 
-use crate::args::ImageFormat;
+use crate::args::{Args, ImageFormat};
 
 fn main() -> Result<()> {
-    let format = tracing_subscriber::fmt::format().without_time();
-    tracing_subscriber::fmt().event_format(format).init();
-
-    let args = args::Args::parse();
+    let args = Args::parse();
 
     if args.file_tree {
         unimplemented!("--tree");
-    }
-    if args.max_images.is_some() {
-        unimplemented!("--max");
     }
     if args.max_attempts.is_some() {
         unimplemented!("--attempts");
@@ -88,38 +81,90 @@ fn main() -> Result<()> {
 
     let existing_dates = get_existing_dates(&directory)?;
 
-    // Must be collected to get length initially
-    let missing_dates: Vec<_> = date_iter(date_start..=date_end)
-        .filter(|date| !existing_dates.contains(date))
-        .collect();
+    let missing_dates =
+        date_iter(date_start..=date_end).filter(|date| !existing_dates.contains(date));
 
-    info!("{}", missing_dates.len());
+    // Must be collected to get count initially
+    let pending_dates: Vec<_> = match args.max_images {
+        Some(max_images) => missing_dates.take(max_images.into()).collect(),
+        None => missing_dates.collect(),
+    };
+    let pending_count = pending_dates.len();
 
     let job_count = args.job_count;
 
-    let rt = Runtime::new().unwrap();
-    rt.block_on(async move {
-        let futures = missing_dates
-            .into_iter()
-            .map(|date| async move { run_download(date).await });
+    type Message = ();
 
-        let results = futures::stream::iter(futures)
-            .buffer_unordered(job_count.into())
-            .collect::<Vec<_>>()
-            .await;
+    Runtime::new().unwrap().block_on(async move {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(job_count.into());
 
-        for result in results {
-            result.unwrap()
+        // Trigger initial progress display
+        tx.send(()).await.unwrap();
+
+        tokio::spawn(async move {
+            let futures = pending_dates.into_iter().map(|date| {
+                let tx = tx.clone();
+                async move {
+                    run_download(date).await?;
+                    tx.send(()).await.unwrap();
+                    Ok::<_, anyhow::Error>(())
+                }
+            });
+
+            let results = futures::stream::iter(futures)
+                .buffer_unordered(job_count.into())
+                .collect::<Vec<_>>()
+                .await;
+
+            for result in results {
+                result.unwrap()
+            }
+        });
+
+        let mut count = 0;
+        while let Some(_msg) = rx.recv().await {
+            let line_count = 2;
+            if count > 0 {
+                for _ in 0..line_count {
+                    print!("\r\x1b[1A");
+                }
+            }
+
+            println!("{:6} {:6}", count, pending_count);
+
+            let percent = count as f32 * 100.0 / pending_count as f32;
+            let bar_width = 40;
+            let bar_progress = count * bar_width / pending_count;
+            print!("{:6.2}%", percent);
+            print!(" [");
+            for i in 0..bar_width {
+                if i <= bar_progress {
+                    print!("#");
+                } else {
+                    print!(".");
+                }
+            }
+            print!("]");
+            println!();
+
+            count += 1;
         }
     });
 
     Ok(())
 }
 
-pub async fn run_download(date: NaiveDate) -> Result<()> {
-    info!(date = %date, "request");
-    tokio::time::sleep(tokio::time::Duration::from_millis(1000)).await;
+pub async fn run_download(_date: NaiveDate) -> Result<()> {
+    let ms = 300 + random_int(700) as u64;
+    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
     Ok(())
+}
+
+fn random_int(max: usize) -> usize {
+    let now = std::time::SystemTime::now();
+    let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap();
+    let nanos = duration.subsec_nanos() as usize;
+    nanos % max
 }
 
 pub fn get_existing_dates(directory: impl AsRef<Path>) -> Result<Vec<NaiveDate>> {
