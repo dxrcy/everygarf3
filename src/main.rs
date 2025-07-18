@@ -1,16 +1,20 @@
 mod args;
 
+use std::num::NonZero;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::{fs, io};
 
 use anyhow::{Context, Result, bail};
-use chrono::{Duration, NaiveDate, NaiveTime, Utc};
+use bytes::Bytes;
+use chrono::{NaiveDate, NaiveTime, Utc};
 use clap::Parser;
 use futures::StreamExt;
+use reqwest::Client;
 use tokio::runtime::Runtime;
 
-use crate::args::{Args, ImageFormat};
+use crate::args::{Args, ImageFormat, defaults};
 
 fn main() -> Result<()> {
     let args = Args::parse();
@@ -18,25 +22,19 @@ fn main() -> Result<()> {
     if args.file_tree {
         unimplemented!("--tree");
     }
-    if args.max_attempts.is_some() {
-        unimplemented!("--attempts");
-    }
-    if args.request_timeout.is_some() {
-        unimplemented!("--timeout");
-    }
-    if args.request_timeout_initial.is_some() {
+    if args.timeout_initial != defaults::TIMEOUT_INITIAL {
         unimplemented!("--initial-timeout");
     }
     if args.notify_on_fail {
         unimplemented!("--notify-on-fail");
     }
-    if args.proxy != Path::new(everygarf::PROXY_DEFAULT) {
+    if args.proxy != Path::new(defaults::PROXY) {
         unimplemented!("--roxy");
     }
     if args.no_proxy {
         unimplemented!("--no-proxy");
     }
-    if args.cache != Path::new(everygarf::CACHE_DEFAULT) {
+    if args.cache != Path::new(defaults::CACHE) {
         unimplemented!("--cache");
     }
     if args.no_cache {
@@ -45,7 +43,7 @@ fn main() -> Result<()> {
     if args.save_cache.is_some() {
         unimplemented!("--save-cache");
     }
-    if !matches!(args.format, ImageFormat::Gif) {
+    if args.format != ImageFormat::default() {
         unimplemented!("--format");
     }
     if args.query {
@@ -92,20 +90,32 @@ fn main() -> Result<()> {
     let pending_count = pending_dates.len();
 
     let job_count = args.job_count;
+    let request_timeout_main = Duration::from_secs(args.timeout_main.into());
+    let max_attempts = args.max_attempts;
 
     type Message = ();
 
     Runtime::new().unwrap().block_on(async move {
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(job_count.into());
-
         // Trigger initial progress display
         tx.send(()).await.unwrap();
+
+
+    const REQUEST_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36";
+
+        let client_main = Client::builder()
+            .user_agent(REQUEST_USER_AGENT)
+            .timeout(request_timeout_main)
+            .build()
+            .expect("Failed to build request client (main). This error should never occur.");
 
         tokio::spawn(async move {
             let futures = pending_dates.into_iter().map(|date| {
                 let tx = tx.clone();
+                let client = client_main.clone();
+
                 async move {
-                    run_download(date).await?;
+                    download_image(DownloadOptions { client, date, max_attempts }).await?;
                     tx.send(()).await.unwrap();
                     Ok::<_, anyhow::Error>(())
                 }
@@ -154,17 +164,75 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-pub async fn run_download(_date: NaiveDate) -> Result<()> {
-    let ms = 300 + random_int(700) as u64;
-    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+struct DownloadOptions {
+    client: Client,
+    date: NaiveDate,
+    max_attempts: NonZero<usize>,
+}
+
+async fn download_image(options: DownloadOptions) -> Result<()> {
+    // TODO(feat): Add error contexts
+
+    let image_url = try_attempts(options.max_attempts.into(), || {
+        fetch_image_url(&options.client, options.date)
+    })
+    .await?;
+
+    eprintln!("{}", image_url);
+
+    let image_bytes = try_attempts(options.max_attempts.into(), || {
+        fetch_image_bytes(&options.client, &image_url)
+    })
+    .await?;
+
+    eprintln!("bytes: {}", image_bytes.len());
+
     Ok(())
 }
 
-fn random_int(max: usize) -> usize {
-    let now = std::time::SystemTime::now();
-    let duration = now.duration_since(std::time::UNIX_EPOCH).unwrap();
-    let nanos = duration.subsec_nanos() as usize;
-    nanos % max
+async fn try_attempts<F, T, E, R>(attempts: usize, mut func: F) -> Result<T, E>
+where
+    F: FnMut() -> R,
+    R: Future<Output = Result<T, E>>,
+{
+    assert!(attempts > 0);
+    let mut i = 0;
+    loop {
+        match func().await {
+            Ok(ok) => return Ok(ok),
+            Err(err) if i >= attempts => return Err(err),
+            _ => (),
+        }
+        i += 1;
+    }
+}
+
+async fn fetch_image_bytes(client: &Client, url: &str) -> Result<Bytes> {
+    // TODO(feat): Add error contexts
+    let response = client.get(url).send().await?.error_for_status()?;
+    let bytes = response.bytes().await?;
+    Ok(bytes)
+}
+
+async fn fetch_image_url(client: &Client, date: NaiveDate) -> Result<String> {
+    let page_url = format!(
+        "https://www.gocomics.com/garfield/{}",
+        date.format("%Y/%m/%d")
+    );
+
+    // TODO(feat): Add error contexts
+    let response = client.get(&page_url).send().await?.error_for_status()?;
+    let body = response.text().await?;
+    let image_url = find_image_url(&body).with_context(|| "no url in body")?;
+    Ok(image_url.to_string())
+}
+
+pub fn find_image_url(body: &str) -> Option<&str> {
+    const IMAGE_URL_PREFIX: &str = "https://featureassets.gocomics.com/assets/";
+    const IMAGE_URL_LENGTH: usize = 74;
+
+    let char_index = body.find(IMAGE_URL_PREFIX)?;
+    body.get(char_index..char_index + IMAGE_URL_LENGTH)
 }
 
 pub fn get_existing_dates(directory: impl AsRef<Path>) -> Result<Vec<NaiveDate>> {
@@ -184,6 +252,9 @@ fn get_filename_date(path: impl AsRef<Path>) -> Option<NaiveDate> {
 }
 
 pub fn date_iter(range: RangeInclusive<NaiveDate>) -> impl Iterator<Item = NaiveDate> {
+    // TODO(refactor)
+    use chrono::Duration;
+
     let (start, end) = (*range.start(), *range.end());
     (0..=(end - start).num_days()).map(move |days| start + Duration::days(days))
 }
@@ -192,6 +263,9 @@ pub const FIRST_DATE: NaiveDate =
     NaiveDate::from_ymd_opt(1978, 6, 19).expect("Failed to parse const date");
 
 pub fn latest() -> NaiveDate {
+    // TODO(refactor)
+    use chrono::Duration;
+
     let now = Utc::now();
 
     // Get naive time (UTC) for when comic is published to gocomics.com

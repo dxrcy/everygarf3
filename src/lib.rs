@@ -2,10 +2,6 @@ use std::fmt;
 
 use clap::ValueEnum;
 
-pub const PROXY_DEFAULT: &str = "https://proxy.darcy-700.workers.dev/cors-proxy";
-pub const CACHE_DEFAULT: &str =
-    "https://raw.githubusercontent.com/dxrcy/everygarf-cache/master/cache";
-
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum Source {
     #[default]

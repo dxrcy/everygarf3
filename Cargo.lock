@@ -704,6 +704,7 @@ name = "everygarf"
 version = "3.0.0-alpha1"
 dependencies = [
  "anyhow",
+ "bytes",
  "chrono",
  "clap",
  "dirs-next",

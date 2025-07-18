@@ -9,9 +9,11 @@ tokio = { version = "1.46.1", features = ["macros", "rt-multi-thread"] }
 futures = "0.3.31"
 # Error handling
 anyhow = "1.0.98"
+# Net requests
+reqwest = "0.12.22"
+bytes = "1.10.1"
 # General
 clap = { version = "4.5.41", features = ["derive"] }
-reqwest = "0.12.22"
 chrono = "0.4.41"
 dirs-next = "2.0.0"
 # Optional
