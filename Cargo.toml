@@ -1,0 +1,19 @@
+[package]
+name = "everygarf"
+version = "3.0.0-alpha1"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.46.1", features = ["macros", "rt-multi-thread"] }
+anyhow = "1.0.98"
+clap = { version = "4.5.41", features = ["derive"] }
+reqwest = "0.12.22"
+chrono = "0.4.41"
+dirs-next = "2.0.0"
+
+image = { version = "0.25.6", optional = true }
+notify-rust = { version = "4.11.7", optional = true }
+
+[features]
+filetype = ["image"]
+notify = ["notify-rust"]
