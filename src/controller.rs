@@ -8,16 +8,12 @@ use reqwest::{Client, Url};
 use tokio::sync::mpsc;
 
 use crate::download::{DownloadOptions, download_image};
-
-#[derive(Debug)]
-pub enum Message {
-    Start,
-    End,
-    CompletedDate(NaiveDate),
-}
+use crate::state::{State, Status, Update};
 
 pub struct Downloader {
-    pub tx: mpsc::Sender<Message>,
+    // TODO(refactor): Move?
+    pub tx: mpsc::Sender<Update>,
+
     pub pending_dates: Vec<NaiveDate>,
     pub client: Client,
     pub directory: PathBuf,
@@ -41,8 +37,7 @@ impl Downloader {
             };
 
             async move {
-                download_image(options).await?;
-                tx.send(Message::CompletedDate(date)).await.unwrap();
+                download_image(&tx, options).await?;
                 Ok(())
             }
         });
@@ -59,26 +54,32 @@ impl Downloader {
     }
 }
 
-pub async fn draw_progress_loop(mut rx: mpsc::Receiver<Message>, pending_count: usize) {
-    draw_progress(Message::Start, 0, pending_count);
+pub async fn draw_progress_loop(mut rx: mpsc::Receiver<Update>, pending_count: usize) {
+    let mut state = State::new(pending_count);
 
-    let mut i = 0;
+    draw_progress(&mut state);
+    state.advance_state();
+
     while let Some(msg) = rx.recv().await {
-        i += 1;
-        draw_progress(msg, i, pending_count);
+        state.update(msg);
+        draw_progress(&mut state);
     }
 
-    draw_progress(Message::End, i, pending_count);
+    state.advance_state();
+    draw_progress(&mut state);
 }
 
-fn draw_progress(msg: Message, current: usize, total: usize) {
-    let line_count = 2;
+fn draw_progress(state: &mut State) {
+    let line_count = 3;
     let bar_width = 40;
+
+    let current = state.completed_units();
+    let total = state.total_units();
 
     let percent = current as f32 * 100.0 / total as f32;
     let bar_progress = current * bar_width / total;
 
-    if current > 0 {
+    if !state.record_draw() {
         for _ in 0..line_count {
             print!("\r"); // Move cursor to beginning of line
             print!("\x1b[1A"); // Move cursor up
@@ -99,9 +100,22 @@ fn draw_progress(msg: Message, current: usize, total: usize) {
     println!();
 
     print!("status: ");
-    match msg {
-        Message::Start => println!("waiting..."),
-        Message::End => println!("all done."),
-        Message::CompletedDate(date) => println!("downloaded {}.", date),
+    match state.status() {
+        Status::Prologue => println!("waiting..."),
+        Status::Epilogue => println!("all done."),
+        Status::Working { .. } => println!("in progress..."),
+    }
+
+    print!("latest: ");
+    if let Some(update) = state.latest_update() {
+        match update {
+            Update::FetchUrlSuccess { date } => println!("{} | found image url.", date),
+            Update::FetchImageSuccess { date } => {
+                println!("{} | downloaded image.", date)
+            }
+            Update::SaveImageSuccess { date } => println!("{} | saved image.", date),
+        }
+    } else {
+        println!("-")
     }
 }

@@ -4,6 +4,7 @@ mod args;
 mod dates;
 mod download;
 mod io;
+mod state;
 // TODO(refactor): Rename
 mod controller;
 

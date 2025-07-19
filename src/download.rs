@@ -8,6 +8,9 @@ use bytes::Bytes;
 use chrono::NaiveDate;
 use everygarf::ImageFormat;
 use reqwest::{Client, Url};
+use tokio::sync::mpsc;
+
+use crate::state::Update;
 
 pub struct DownloadOptions<'a> {
     pub date: NaiveDate,
@@ -18,27 +21,31 @@ pub struct DownloadOptions<'a> {
     pub proxy: Option<&'a Url>,
 }
 
-pub async fn download_image<'a>(options: DownloadOptions<'a>) -> Result<()> {
+pub async fn download_image<'a>(
+    tx: &mpsc::Sender<Update>,
+    options: DownloadOptions<'a>,
+) -> Result<()> {
     // TODO(feat): Add error contexts
 
+    let date = options.date;
+
     let image_url = try_attempts(options.max_attempts.into(), || {
-        fetch_image_url(options.date, &options.client, options.proxy)
+        fetch_image_url(date, &options.client, options.proxy)
     })
     .await?;
+
+    tx.send(Update::FetchUrlSuccess { date }).await.unwrap();
 
     let image_bytes = try_attempts(options.max_attempts.into(), || {
         fetch_image_bytes(&image_url, &options.client)
     })
     .await?;
 
-    save_image(
-        options.date,
-        image_bytes,
-        options.directory,
-        options.image_format,
-    )?;
+    tx.send(Update::FetchImageSuccess { date }).await.unwrap();
 
-    // eprintln!("done");
+    save_image(date, image_bytes, options.directory, options.image_format)?;
+
+    tx.send(Update::SaveImageSuccess { date }).await.unwrap();
 
     Ok(())
 }
@@ -87,7 +94,6 @@ async fn fetch_image_bytes(url: &str, client: &Client) -> Result<Bytes> {
 
 async fn fetch_image_url(date: NaiveDate, client: &Client, proxy: Option<&Url>) -> Result<String> {
     let page_url = get_page_url(proxy, "https://www.gocomics.com/garfield", date);
-    eprintln!("{}", page_url);
 
     // TODO(feat): Add error contexts
     let response = client.get(&page_url).send().await?.error_for_status()?;
