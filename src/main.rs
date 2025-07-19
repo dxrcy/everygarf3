@@ -69,6 +69,8 @@ fn main() -> Result<()> {
 
     let request_timeout_primary = Duration::from_secs(args.timeout_primary.into());
 
+    let proxy = Some(args.proxy).filter(|_| !args.no_proxy);
+
     let client_primary = Client::builder()
         .user_agent(&args.user_agent)
         .timeout(request_timeout_primary)
@@ -85,6 +87,7 @@ fn main() -> Result<()> {
         job_count: args.job_count,
         max_attempts: args.max_attempts,
         image_format: args.image_format,
+        proxy,
     };
 
     Runtime::new().unwrap().block_on(async move {
@@ -122,12 +125,6 @@ fn check_unimplemented_args(args: &Args) -> Option<&'static str> {
     }
     if args.notify_on_fail {
         return Some("--notify-on-fail");
-    }
-    if args.proxy != Path::new(defaults::PROXY) {
-        return Some("--proxy");
-    }
-    if args.no_proxy {
-        return Some("--no-proxy");
     }
     if args.cache != Path::new(defaults::CACHE) {
         return Some("--cache");

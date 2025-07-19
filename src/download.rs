@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::fs;
 use std::num::NonZero;
 use std::path::Path;
@@ -6,7 +7,7 @@ use anyhow::{Context as _, Result};
 use bytes::Bytes;
 use chrono::NaiveDate;
 use everygarf::ImageFormat;
-use reqwest::Client;
+use reqwest::{Client, Url};
 
 pub struct DownloadOptions<'a> {
     pub date: NaiveDate,
@@ -14,13 +15,14 @@ pub struct DownloadOptions<'a> {
     pub directory: &'a Path,
     pub max_attempts: NonZero<usize>,
     pub image_format: ImageFormat,
+    pub proxy: Option<&'a Url>,
 }
 
 pub async fn download_image<'a>(options: DownloadOptions<'a>) -> Result<()> {
     // TODO(feat): Add error contexts
 
     let image_url = try_attempts(options.max_attempts.into(), || {
-        fetch_image_url(options.date, &options.client)
+        fetch_image_url(options.date, &options.client, options.proxy)
     })
     .await?;
 
@@ -83,11 +85,9 @@ async fn fetch_image_bytes(url: &str, client: &Client) -> Result<Bytes> {
     Ok(bytes)
 }
 
-async fn fetch_image_url(date: NaiveDate, client: &Client) -> Result<String> {
-    let page_url = format!(
-        "https://www.gocomics.com/garfield/{}",
-        date.format("%Y/%m/%d")
-    );
+async fn fetch_image_url(date: NaiveDate, client: &Client, proxy: Option<&Url>) -> Result<String> {
+    let page_url = get_page_url(proxy, "https://www.gocomics.com/garfield", date);
+    eprintln!("{}", page_url);
 
     // TODO(feat): Add error contexts
     let response = client.get(&page_url).send().await?.error_for_status()?;
@@ -102,4 +102,13 @@ pub fn find_image_url(body: &str) -> Option<&str> {
 
     let char_index = body.find(IMAGE_URL_PREFIX)?;
     body.get(char_index..char_index + IMAGE_URL_LENGTH)
+}
+
+fn get_page_url(proxy: Option<&Url>, base: &str, date: NaiveDate) -> String {
+    let mut url = String::new();
+    if let Some(proxy) = proxy {
+        write!(url, "{}?", proxy).unwrap();
+    }
+    write!(url, "{}/{}", base, date.format("%Y/%m/%d")).unwrap();
+    url
 }

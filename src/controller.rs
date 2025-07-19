@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use chrono::NaiveDate;
 use futures::StreamExt as _;
-use reqwest::Client;
+use reqwest::{Client, Url};
 use tokio::sync::mpsc;
 
 use crate::download::{DownloadOptions, download_image};
@@ -24,6 +24,7 @@ pub struct Downloader {
     pub job_count: NonZero<usize>,
     pub max_attempts: NonZero<usize>,
     pub image_format: everygarf::ImageFormat,
+    pub proxy: Option<Url>,
 }
 
 impl Downloader {
@@ -36,6 +37,7 @@ impl Downloader {
                 directory: &self.directory,
                 max_attempts: self.max_attempts,
                 image_format: self.image_format,
+                proxy: self.proxy.as_ref(),
             };
 
             async move {

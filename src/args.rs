@@ -1,6 +1,8 @@
 use std::num::NonZero;
 use std::path::PathBuf;
 
+use reqwest::Url;
+
 use everygarf::{ImageFormat, Source};
 
 pub mod defaults {
@@ -50,7 +52,7 @@ pub struct Args {
     pub remove_all: bool,
 
     #[arg(short = 'p', long = "proxy", default_value = defaults::PROXY, conflicts_with = "no_proxy")]
-    pub proxy: PathBuf,
+    pub proxy: Url,
 
     #[arg(short = 'P', long = "no-proxy", conflicts_with = "proxy")]
     pub no_proxy: bool,
