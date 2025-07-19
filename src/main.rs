@@ -1,7 +1,11 @@
+#![allow(clippy::uninlined_format_args)]
+
 mod args;
 mod dates;
 mod download;
 mod io;
+// TODO(refactor): Rename
+mod controller;
 
 use std::fs;
 use std::path::Path;
@@ -10,13 +14,11 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use clap::Parser;
-use futures::StreamExt;
 use reqwest::Client;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
 use crate::args::{Args, defaults};
-use crate::download::{DownloadOptions, download_image};
 use crate::io::{create_target_directory, get_target_directory};
 
 fn main() -> Result<()> {
@@ -65,106 +67,34 @@ fn main() -> Result<()> {
     };
     let pending_count = pending_dates.len();
 
-    let request_timeout_main = Duration::from_secs(args.timeout_main.into());
+    let request_timeout_primary = Duration::from_secs(args.timeout_primary.into());
 
-    let client_main = Client::builder()
+    let client_primary = Client::builder()
         .user_agent(&args.user_agent)
-        .timeout(request_timeout_main)
+        .timeout(request_timeout_primary)
         .build()
-        .expect("Failed to build request client (main). This error should never occur.");
+        .expect("Failed to build request client (primary). This error should never occur.");
 
-    let (tx, mut rx) = mpsc::channel::<()>(args.job_count.into());
+    let (tx, rx) = mpsc::channel(args.job_count.into());
+
+    let downloader = controller::Downloader {
+        tx,
+        pending_dates,
+        client: client_primary,
+        directory,
+        job_count: args.job_count,
+        max_attempts: args.max_attempts,
+        image_format: args.image_format,
+    };
 
     Runtime::new().unwrap().block_on(async move {
         tokio::spawn(async move {
-            download_pending_images(
-                tx,
-                pending_dates,
-                client_main.clone(),
-                directory,
-                args.job_count,
-                args.max_attempts,
-                args.image_format,
-            )
-            .await
+            downloader.download_pending_images().await;
         });
-
-        draw_progress(0, pending_count);
-        for i in 1.. {
-            if rx.recv().await.is_none() {
-                continue;
-            };
-            draw_progress(i, pending_count);
-        }
+        controller::draw_progress_loop(rx, pending_count).await;
     });
 
     Ok(())
-}
-
-async fn download_pending_images(
-    tx: mpsc::Sender<()>,
-    pending_dates: Vec<NaiveDate>,
-    client: Client,
-    directory: std::path::PathBuf,
-    job_count: std::num::NonZero<usize>,
-    max_attempts: std::num::NonZero<usize>,
-    image_format: everygarf::ImageFormat,
-) {
-    let futures = pending_dates.into_iter().map(|date| {
-        let tx = tx.clone();
-        let client = client.clone();
-        let directory = &directory;
-
-        async move {
-            download_image(DownloadOptions {
-                date,
-                client,
-                directory,
-                max_attempts,
-                image_format,
-            })
-            .await?;
-            tx.send(()).await.unwrap();
-            Ok::<_, anyhow::Error>(())
-        }
-    });
-
-    let results = futures::stream::iter(futures)
-        .buffer_unordered(job_count.into())
-        .collect::<Vec<_>>()
-        .await;
-
-    for result in results {
-        result.unwrap()
-    }
-}
-
-fn draw_progress(current: usize, total: usize) {
-    let line_count = 2;
-    let bar_width = 40;
-
-    let percent = current as f32 * 100.0 / total as f32;
-    let bar_progress = current * bar_width / total;
-
-    if current > 0 {
-        for _ in 0..line_count {
-            print!("\r\x1b[1A");
-        }
-    }
-
-    println!("{:6} {:6}", current, total);
-
-    print!("{:6.2}%", percent);
-    print!(" [");
-    for i in 0..bar_width {
-        if i <= bar_progress {
-            print!("#");
-        } else {
-            print!(".");
-        }
-    }
-    print!("]");
-    println!();
 }
 
 pub fn get_existing_dates(directory: impl AsRef<Path>) -> Result<Vec<NaiveDate>> {

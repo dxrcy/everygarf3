@@ -2,14 +2,6 @@ use std::ops::RangeInclusive;
 
 use chrono::{NaiveDate, NaiveTime, Utc};
 
-pub fn date_iter(range: RangeInclusive<NaiveDate>) -> impl Iterator<Item = NaiveDate> {
-    // TODO(refactor)
-    use chrono::Duration;
-
-    let (start, end) = (*range.start(), *range.end());
-    (0..=(end - start).num_days()).map(move |days| start + Duration::days(days))
-}
-
 pub const FIRST_DATE: NaiveDate =
     NaiveDate::from_ymd_opt(1978, 6, 19).expect("Failed to parse const date");
 
@@ -31,4 +23,12 @@ pub fn latest() -> NaiveDate {
     // Today if currently AFTER time of publish for todays comic
     // Yesterday if currently BEFORE time of publish for todays comic
     now.date_naive() - Duration::days(if now.time() > time_of_publish { 0 } else { 1 })
+}
+
+pub fn date_iter(range: RangeInclusive<NaiveDate>) -> impl Iterator<Item = NaiveDate> {
+    // TODO(refactor)
+    use chrono::Duration;
+
+    let (start, end) = (*range.start(), *range.end());
+    (0..=(end - start).num_days()).map(move |days| start + Duration::days(days))
 }

@@ -38,7 +38,7 @@ pub struct Args {
     pub max_attempts: NonZero<usize>,
 
     #[arg(short = 't', long = "timeout", default_value_t = defaults::TIMEOUT)]
-    pub timeout_main: NonZero<u64>,
+    pub timeout_primary: NonZero<u64>,
 
     #[arg(short = 'T', long = "initial-timeout", default_value_t = defaults::TIMEOUT_INITIAL)]
     pub timeout_initial: NonZero<u64>,

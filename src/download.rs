@@ -36,26 +36,8 @@ pub async fn download_image<'a>(options: DownloadOptions<'a>) -> Result<()> {
         options.image_format,
     )?;
 
-    eprintln!("done");
+    // eprintln!("done");
 
-    Ok(())
-}
-
-fn save_image(
-    date: NaiveDate,
-    bytes: Bytes,
-    directory: impl AsRef<Path>,
-    image_format: ImageFormat,
-) -> Result<()> {
-    let filename = format!("{}.{}", date.format("%Y-%m-%d"), image_format);
-    let path = directory.as_ref().join(filename);
-
-    if image_format == ImageFormat::Gif {
-        fs::write(path, &bytes)?;
-    } else {
-        let image = image::load_from_memory(&bytes).with_context(|| "loading image from bytes")?;
-        image.save(path)?;
-    }
     Ok(())
 }
 
@@ -74,6 +56,24 @@ where
         }
         i += 1;
     }
+}
+
+fn save_image(
+    date: NaiveDate,
+    bytes: Bytes,
+    directory: impl AsRef<Path>,
+    image_format: ImageFormat,
+) -> Result<()> {
+    let filename = format!("{}.{}", date.format("%Y-%m-%d"), image_format);
+    let path = directory.as_ref().join(filename);
+
+    if image_format == ImageFormat::Gif {
+        fs::write(path, &bytes)?;
+    } else {
+        let image = image::load_from_memory(&bytes).with_context(|| "loading image from bytes")?;
+        image.save(path)?;
+    }
+    Ok(())
 }
 
 async fn fetch_image_bytes(url: &str, client: &Client) -> Result<Bytes> {
