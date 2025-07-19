@@ -11,9 +11,7 @@ use crate::download::{DownloadOptions, download_image};
 use crate::state::{State, Status, Update};
 
 pub struct Downloader {
-    // TODO(refactor): Move?
     pub tx: mpsc::Sender<Update>,
-
     pub pending_dates: Vec<NaiveDate>,
     pub client: Client,
     pub directory: PathBuf,
@@ -21,6 +19,22 @@ pub struct Downloader {
     pub max_attempts: NonZero<usize>,
     pub image_format: everygarf::ImageFormat,
     pub proxy: Option<Url>,
+}
+
+pub async fn check_proxy(
+    tx: &mpsc::Sender<Update>,
+    client: &Client,
+    proxy: Option<&Url>,
+) -> Result<(), ()> {
+    let Some(proxy) = proxy else {
+        return Ok(());
+    };
+    // TODO(feat): Send error value
+    if let Err(_error) = try_ping(client, proxy.clone()).await {
+        tx.send(Update::ProxyPingFail).await.unwrap();
+        return Err(());
+    };
+    return Ok(());
 }
 
 impl Downloader {
@@ -58,14 +72,14 @@ pub async fn draw_progress_loop(mut rx: mpsc::Receiver<Update>, pending_count: u
     let mut state = State::new(pending_count);
 
     draw_progress(&mut state);
-    state.advance_state();
+    state.advance_status();
 
     while let Some(msg) = rx.recv().await {
         state.update(msg);
         draw_progress(&mut state);
     }
 
-    state.advance_state();
+    state.advance_status();
     draw_progress(&mut state);
 }
 
@@ -90,7 +104,7 @@ fn draw_progress(state: &mut State) {
     print!("{:6.2}%", percent);
     print!(" [");
     for i in 0..bar_width {
-        if i <= bar_progress {
+        if i < bar_progress {
             print!("#");
         } else {
             print!(".");
@@ -101,14 +115,17 @@ fn draw_progress(state: &mut State) {
 
     print!("status: ");
     match state.status() {
-        Status::Prologue => println!("waiting..."),
-        Status::Epilogue => println!("all done."),
+        Status::PingProxy => println!("pinging proxy server..."),
         Status::Working { .. } => println!("in progress..."),
+        Status::Epilogue => println!("all done."),
+        Status::Failed => println!("failed!"),
     }
 
     print!("latest: ");
     if let Some(update) = state.latest_update() {
         match update {
+            Update::ProxyPingFail => println!("unable to access proxy server"),
+
             Update::FetchUrlSuccess { date } => println!("{} | found image url.", date),
             Update::FetchImageSuccess { date } => {
                 println!("{} | downloaded image.", date)
@@ -118,4 +135,9 @@ fn draw_progress(state: &mut State) {
     } else {
         println!("-")
     }
+}
+
+async fn try_ping(client: &Client, proxy: Url) -> reqwest::Result<()> {
+    client.get(proxy).send().await?.error_for_status()?;
+    Ok(())
 }

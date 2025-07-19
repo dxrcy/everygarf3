@@ -69,6 +69,7 @@ fn main() -> Result<()> {
     let pending_count = pending_dates.len();
 
     let request_timeout_primary = Duration::from_secs(args.timeout_primary.into());
+    let request_timeout_initial = Duration::from_secs(args.timeout_initial.into());
 
     let proxy = Some(args.proxy).filter(|_| !args.no_proxy);
 
@@ -77,23 +78,35 @@ fn main() -> Result<()> {
         .timeout(request_timeout_primary)
         .build()
         .expect("Failed to build request client (primary). This error should never occur.");
+    let client_initial = Client::builder()
+        .user_agent(&args.user_agent)
+        .timeout(request_timeout_initial)
+        .build()
+        .expect("Failed to build request client (initial). This error should never occur.");
 
     let (tx, rx) = mpsc::channel(args.job_count.into());
 
-    let downloader = controller::Downloader {
-        tx,
-        pending_dates,
-        client: client_primary,
-        directory,
-        job_count: args.job_count,
-        max_attempts: args.max_attempts,
-        image_format: args.image_format,
-        proxy,
-    };
-
     Runtime::new().unwrap().block_on(async move {
         tokio::spawn(async move {
-            downloader.download_pending_images().await;
+            if controller::check_proxy(&tx, &client_initial, proxy.as_ref())
+                .await
+                .is_err()
+            {
+                return;
+            };
+
+            controller::Downloader {
+                tx,
+                pending_dates,
+                client: client_primary,
+                directory,
+                job_count: args.job_count,
+                max_attempts: args.max_attempts,
+                image_format: args.image_format,
+                proxy,
+            }
+            .download_pending_images()
+            .await;
         });
         controller::draw_progress_loop(rx, pending_count).await;
     });
