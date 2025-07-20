@@ -3,8 +3,10 @@ use chrono::NaiveDate;
 #[derive(Clone, Copy, Debug)]
 pub struct State {
     status: Status,
-    latest_update: Option<Update>,
     is_first_draw: bool,
+
+    latest_success: Option<UpdateSuccess>,
+    latest_warning: Option<UpdateWarning>,
 
     completed_units: usize,
     total_units: usize,
@@ -18,24 +20,31 @@ pub enum Status {
     Failed,
 }
 
+pub type Update = Result<UpdateSuccess, UpdateWarning>;
+
 #[derive(Clone, Copy, Debug)]
-pub enum Update {
-    ProxyPingOk,
+pub enum UpdateSuccess {
+    ProxyPing,
 
-    FetchUrlOk { date: NaiveDate },
-    FetchImageOk { date: NaiveDate },
-    SaveImageOk { date: NaiveDate },
+    FetchUrl { date: NaiveDate },
+    FetchImage { date: NaiveDate },
+    SaveImage { date: NaiveDate },
+}
 
-    FetchUrlWarning { attempt: usize, date: NaiveDate },
-    FetchImageWarning { attempt: usize, date: NaiveDate },
+#[derive(Clone, Copy, Debug)]
+pub enum UpdateWarning {
+    FetchUrl { attempt: usize, date: NaiveDate },
+    FetchImage { attempt: usize, date: NaiveDate },
 }
 
 impl State {
     pub fn new(total_units: usize) -> Self {
         Self {
             status: Status::PingProxy,
-            latest_update: None,
             is_first_draw: true,
+
+            latest_success: None,
+            latest_warning: None,
 
             completed_units: 0,
             total_units,
@@ -53,14 +62,20 @@ impl State {
 
     pub fn set_failed(&mut self) {
         self.status = Status::Failed;
-        self.latest_update = None;
+        self.latest_success = None;
     }
 
     pub fn update(&mut self, update: Update) {
-        self.latest_update = Some(update);
-
-        if let Update::SaveImageOk { .. } = update {
-            self.increase_complete_units();
+        match update {
+            Ok(success) => {
+                self.latest_success = Some(success);
+                if let UpdateSuccess::SaveImage { .. } = success {
+                    self.increase_complete_units();
+                }
+            }
+            Err(warning) => {
+                self.latest_warning = Some(warning);
+            }
         }
     }
 
@@ -73,16 +88,20 @@ impl State {
         }
     }
 
-    pub fn completed_units(&self) -> usize {
-        self.completed_units
-    }
-
     pub fn status(&self) -> Status {
         self.status
     }
 
-    pub fn latest_update(&self) -> Option<Update> {
-        self.latest_update
+    pub fn latest_success(&self) -> Option<UpdateSuccess> {
+        self.latest_success
+    }
+
+    pub fn latest_warning(&self) -> Option<UpdateWarning> {
+        self.latest_warning
+    }
+
+    pub fn completed_units(&self) -> usize {
+        self.completed_units
     }
 
     pub fn total_units(&self) -> usize {

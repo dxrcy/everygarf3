@@ -8,7 +8,7 @@ use reqwest::{Client, Url};
 use tokio::sync::mpsc;
 
 use crate::download::{DownloadOptions, download_image};
-use crate::state::{State, Status, Update};
+use crate::state::{State, Status, Update, UpdateSuccess, UpdateWarning};
 
 pub struct Downloader {
     pub tx: mpsc::Sender<Result<Update>>,
@@ -37,7 +37,7 @@ pub async fn check_proxy(
         return Err(());
     };
 
-    tx.send(Ok(Update::ProxyPingOk)).await.unwrap();
+    tx.send(Ok(Ok(UpdateSuccess::ProxyPing))).await.unwrap();
     Ok(())
 }
 
@@ -103,7 +103,7 @@ pub async fn draw_progress_loop(
 }
 
 fn draw_progress(state: &mut State) {
-    let line_count = 3;
+    let line_count = 4;
     let bar_width = 40;
 
     let current = state.completed_units();
@@ -132,7 +132,7 @@ fn draw_progress(state: &mut State) {
     print!("]");
     println!();
 
-    print!("status: ");
+    print!(" status: ");
     match state.status() {
         Status::PingProxy => println!("pinging proxy server..."),
         Status::Working => println!("in progress..."),
@@ -140,28 +140,32 @@ fn draw_progress(state: &mut State) {
         Status::Failed => println!("failed!"),
     }
 
-    print!("latest: ");
-    if let Some(update) = state.latest_update() {
-        match update {
-            Update::ProxyPingOk => println!("proxy server working."),
+    print!(" update: ");
+    if let Some(success) = state.latest_success() {
+        match success {
+            UpdateSuccess::ProxyPing => println!("proxy server working."),
 
-            Update::FetchUrlOk { date } => println!("{} | fetched image url.", date),
-            Update::FetchImageOk { date } => {
+            UpdateSuccess::FetchUrl { date } => println!("{} | fetched image url.", date),
+            UpdateSuccess::FetchImage { date } => {
                 println!("{} | downloaded image.", date)
             }
-            Update::SaveImageOk { date } => println!("{} | saved image.", date),
+            UpdateSuccess::SaveImage { date } => println!("{} | saved image.", date),
+        }
+    } else {
+        println!("...")
+    }
 
-            Update::FetchUrlWarning { attempt, date } => {
+    print!("warning: ");
+    if let Some(warning) = state.latest_warning() {
+        match warning {
+            UpdateWarning::FetchUrl { attempt, date } => {
                 println!(
-                    "{} | (warning) failed to fetch image url (attempt {}).",
+                    "{} | failed to fetch image url (attempt {}).",
                     date, attempt
                 )
             }
-            Update::FetchImageWarning { attempt, date } => {
-                println!(
-                    "{} | (warning) failed to download image (attempt {}).",
-                    date, attempt
-                )
+            UpdateWarning::FetchImage { attempt, date } => {
+                println!("{} | failed to download image (attempt {}).", date, attempt)
             }
         }
     } else {

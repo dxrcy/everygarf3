@@ -10,7 +10,7 @@ use everygarf::ImageFormat;
 use reqwest::{Client, Url};
 use tokio::sync::mpsc;
 
-use crate::state::Update;
+use crate::state::{Update, UpdateSuccess, UpdateWarning};
 
 pub struct DownloadOptions<'a> {
     pub date: NaiveDate,
@@ -31,28 +31,34 @@ pub async fn download_image<'a>(
         tx,
         options.max_attempts.into(),
         || fetch_image_url(date, &options.client, options.proxy),
-        |attempt, _| Update::FetchUrlWarning { attempt, date },
+        |attempt, _| UpdateWarning::FetchUrl { attempt, date },
     )
     .await
     .with_context(|| "failed to fetch image url")?;
 
-    tx.send(Ok(Update::FetchUrlOk { date })).await.unwrap();
+    tx.send(Ok(Ok(UpdateSuccess::FetchUrl { date })))
+        .await
+        .unwrap();
 
     let image_bytes = try_attempts(
         tx,
         options.max_attempts.into(),
         || fetch_image_bytes(&image_url, &options.client),
-        |attempt, _| Update::FetchImageWarning { attempt, date },
+        |attempt, _| UpdateWarning::FetchImage { attempt, date },
     )
     .await
     .with_context(|| "failed to fetch image data")?;
 
-    tx.send(Ok(Update::FetchImageOk { date })).await.unwrap();
+    tx.send(Ok(Ok(UpdateSuccess::FetchImage { date })))
+        .await
+        .unwrap();
 
     save_image(date, image_bytes, options.directory, options.image_format)
         .with_context(|| "failed to save image")?;
 
-    tx.send(Ok(Update::SaveImageOk { date })).await.unwrap();
+    tx.send(Ok(Ok(UpdateSuccess::SaveImage { date })))
+        .await
+        .unwrap();
 
     Ok(())
 }
@@ -66,7 +72,7 @@ async fn try_attempts<F, R, T, W>(
 where
     F: FnMut() -> R,
     R: Future<Output = Result<T>>,
-    W: FnMut(usize, anyhow::Error) -> Update,
+    W: FnMut(usize, anyhow::Error) -> UpdateWarning,
 {
     assert!(attempts > 0);
     let mut i = 0;
@@ -76,7 +82,7 @@ where
                 return Ok(ok);
             }
             Err(error) if i < attempts => {
-                tx.send(Ok(warning(i, error))).await.unwrap();
+                tx.send(Ok(Err(warning(i, error)))).await.unwrap();
             }
             Err(error) => {
                 return Err(error);
