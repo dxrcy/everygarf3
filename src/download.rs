@@ -10,7 +10,7 @@ use everygarf::ImageFormat;
 use reqwest::{Client, Url};
 use tokio::sync::mpsc;
 
-use crate::state::{UpdateErr, UpdateOk, UpdateResult};
+use crate::state::Update;
 
 pub struct DownloadOptions<'a> {
     pub date: NaiveDate,
@@ -22,34 +22,33 @@ pub struct DownloadOptions<'a> {
 }
 
 pub async fn download_image<'a>(
-    tx: &mpsc::Sender<UpdateResult>,
+    tx: &mpsc::Sender<Result<Update>>,
     options: DownloadOptions<'a>,
-) -> Result<(), UpdateErr> {
+) -> Result<()> {
     // TODO(feat): Add error contexts
 
     let date = options.date;
 
-    let Ok(image_url) = try_attempts(options.max_attempts.into(), || {
+    let image_url = try_attempts(options.max_attempts.into(), || {
         fetch_image_url(date, &options.client, options.proxy)
     })
     .await
-    else {
-        return Err(UpdateErr::FetchUrl { date });
-    };
+    .with_context(|| "failed to fetch image url")?;
 
-    tx.send(Ok(UpdateOk::FetchUrl { date })).await.unwrap();
+    tx.send(Ok(Update::FetchUrl { date })).await.unwrap();
 
     let image_bytes = try_attempts(options.max_attempts.into(), || {
         fetch_image_bytes(&image_url, &options.client)
     })
     .await
-    .unwrap();
+    .with_context(|| "failed to fetch image data")?;
 
-    tx.send(Ok(UpdateOk::FetchImage { date })).await.unwrap();
+    tx.send(Ok(Update::FetchImage { date })).await.unwrap();
 
-    save_image(date, image_bytes, options.directory, options.image_format).unwrap();
+    save_image(date, image_bytes, options.directory, options.image_format)
+        .with_context(|| "failed to save image")?;
 
-    tx.send(Ok(UpdateOk::SaveImage { date })).await.unwrap();
+    tx.send(Ok(Update::SaveImage { date })).await.unwrap();
 
     Ok(())
 }

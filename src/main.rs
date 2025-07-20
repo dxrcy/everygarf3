@@ -119,14 +119,11 @@ fn run() -> Result<()> {
             .await;
         });
 
-        if controller::draw_progress_loop(&mut rx, pending_count)
-            .await
-            .is_err()
-        {
+        if let Err(error) = controller::draw_progress_loop(&mut rx, pending_count).await {
             downloader_handle.abort();
             // Wait for any additional messages, to prevent sender panicking
-            while let Some(_) = rx.recv().await {}
-            bail!("failed");
+            while rx.recv().await.is_some() {}
+            return Err(error);
         }
 
         Ok(())

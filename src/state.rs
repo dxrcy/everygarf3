@@ -3,7 +3,7 @@ use chrono::NaiveDate;
 #[derive(Clone, Copy, Debug)]
 pub struct State {
     status: Status,
-    latest_update: Option<UpdateResult>,
+    latest_update: Option<Update>,
     is_first_draw: bool,
 
     completed_units: usize,
@@ -18,24 +18,13 @@ pub enum Status {
     Failed,
 }
 
-pub type UpdateResult = Result<UpdateOk, UpdateErr>;
-
 #[derive(Clone, Copy, Debug)]
-pub enum UpdateOk {
+pub enum Update {
     ProxyPing,
 
     FetchUrl { date: NaiveDate },
     FetchImage { date: NaiveDate },
     SaveImage { date: NaiveDate },
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum UpdateErr {
-    ProxyPing,
-
-    FetchUrl { date: NaiveDate },
-    // FetchImage { date: NaiveDate },
-    // SaveImage { date: NaiveDate },
 }
 
 impl State {
@@ -59,17 +48,16 @@ impl State {
         }
     }
 
-    pub fn update(&mut self, update: UpdateResult) {
+    pub fn set_failed(&mut self) {
+        self.status = Status::Failed;
+        self.latest_update = None;
+    }
+
+    pub fn update(&mut self, update: Update) {
         self.latest_update = Some(update);
 
-        match update {
-            Err(_) => {
-                self.status = Status::Failed;
-            }
-            Ok(UpdateOk::SaveImage { .. }) => {
-                self.increase_complete_units();
-            }
-            _ => (),
+        if let Update::SaveImage { .. } = update {
+            self.increase_complete_units();
         }
     }
 
@@ -90,16 +78,12 @@ impl State {
         self.status
     }
 
-    pub fn latest_update(&self) -> Option<UpdateResult> {
+    pub fn latest_update(&self) -> Option<Update> {
         self.latest_update
     }
 
     pub fn total_units(&self) -> usize {
         self.total_units
-    }
-
-    pub fn is_failed(&self) -> bool {
-        self.status == Status::Failed
     }
 
     pub fn record_draw(&mut self) -> bool {
