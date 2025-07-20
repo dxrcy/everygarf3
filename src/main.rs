@@ -25,10 +25,12 @@ use crate::args::{Args, defaults};
 use crate::io::{create_target_directory, get_target_directory};
 
 fn main() -> ExitCode {
+    println!("everygarf");
     if let Err(error) = run() {
-        eprintln!("failed: {}", error);
+        println!("failed: {}", error);
         ExitCode::FAILURE
     } else {
+        println!("done!");
         ExitCode::SUCCESS
     }
 }

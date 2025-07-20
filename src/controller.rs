@@ -90,29 +90,29 @@ pub async fn draw_progress_loop(
 ) -> Result<()> {
     let mut state = State::new(pending_count);
 
-    draw_progress(&mut state);
+    draw_progress(&mut state, false);
     state.advance_status();
 
     while let Some(msg) = rx.recv().await {
         match msg {
             Ok(update) => {
                 state.update(update);
-                draw_progress(&mut state);
+                draw_progress(&mut state, false);
             }
             Err(error) => {
                 state.set_failed();
-                draw_progress(&mut state);
+                draw_progress(&mut state, true);
                 return Err(error);
             }
         }
     }
 
     state.advance_status();
-    draw_progress(&mut state);
+    draw_progress(&mut state, true);
     Ok(())
 }
 
-fn draw_progress(state: &mut State) {
+fn draw_progress(state: &mut State, concise: bool) {
     let line_count = 4;
     let bar_width = 40;
 
@@ -130,6 +130,7 @@ fn draw_progress(state: &mut State) {
         }
     }
 
+    // Always draw progress bar no matter the context
     print!("{:6.2}%", percent);
     print!(" [");
     for i in 0..bar_width {
@@ -142,6 +143,10 @@ fn draw_progress(state: &mut State) {
     print!("]");
     println!();
 
+    if concise {
+        return;
+    }
+
     print!(" status: ");
     match state.status() {
         Status::PingProxy => println!("pinging proxy server..."),
@@ -150,7 +155,7 @@ fn draw_progress(state: &mut State) {
         Status::Failed => println!("failed!"),
     }
 
-    print!(" update: ");
+    print!(" latest: ");
     if let Some(success) = state.latest_success() {
         match success {
             UpdateSuccess::ProxyPing => println!("proxy server working."),
@@ -165,8 +170,8 @@ fn draw_progress(state: &mut State) {
         println!("...")
     }
 
-    print!("warning: ");
     if let Some(warning) = state.latest_warning() {
+        print!("warning: ");
         match warning {
             UpdateWarning::FetchUrl { attempt, date } => {
                 println!(
@@ -179,7 +184,7 @@ fn draw_progress(state: &mut State) {
             }
         }
     } else {
-        println!("...")
+        println!();
     }
 }
 
