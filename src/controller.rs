@@ -8,10 +8,10 @@ use reqwest::{Client, Url};
 use tokio::sync::mpsc;
 
 use crate::download::{DownloadOptions, download_image};
-use crate::state::{State, Status, Update};
+use crate::state::{State, Status, UpdateErr, UpdateOk, UpdateResult};
 
 pub struct Downloader {
-    pub tx: mpsc::Sender<Update>,
+    pub tx: mpsc::Sender<UpdateResult>,
     pub pending_dates: Vec<NaiveDate>,
     pub client: Client,
     pub directory: PathBuf,
@@ -22,7 +22,7 @@ pub struct Downloader {
 }
 
 pub async fn check_proxy(
-    tx: &mpsc::Sender<Update>,
+    tx: &mpsc::Sender<UpdateResult>,
     client: &Client,
     proxy: Option<&Url>,
 ) -> Result<(), ()> {
@@ -31,9 +31,10 @@ pub async fn check_proxy(
     };
     // TODO(feat): Send error value
     if let Err(_error) = try_ping(client, proxy.clone()).await {
-        tx.send(Update::ProxyPingFail).await.unwrap();
+        tx.send(Err(UpdateErr::ProxyPing)).await.unwrap();
         return Err(());
     };
+    tx.send(Ok(UpdateOk::ProxyPing)).await.unwrap();
     return Ok(());
 }
 
@@ -51,7 +52,9 @@ impl Downloader {
             };
 
             async move {
-                download_image(&tx, options).await?;
+                if let Err(error) = download_image(&tx, options).await {
+                    tx.send(Err(error)).await.unwrap();
+                };
                 Ok(())
             }
         });
@@ -68,7 +71,10 @@ impl Downloader {
     }
 }
 
-pub async fn draw_progress_loop(mut rx: mpsc::Receiver<Update>, pending_count: usize) {
+pub async fn draw_progress_loop(
+    rx: &mut mpsc::Receiver<UpdateResult>,
+    pending_count: usize,
+) -> Result<(), ()> {
     let mut state = State::new(pending_count);
 
     draw_progress(&mut state);
@@ -77,10 +83,14 @@ pub async fn draw_progress_loop(mut rx: mpsc::Receiver<Update>, pending_count: u
     while let Some(msg) = rx.recv().await {
         state.update(msg);
         draw_progress(&mut state);
+        if state.is_failed() {
+            return Err(());
+        }
     }
 
     state.advance_status();
     draw_progress(&mut state);
+    Ok(())
 }
 
 fn draw_progress(state: &mut State) {
@@ -116,7 +126,7 @@ fn draw_progress(state: &mut State) {
     print!("status: ");
     match state.status() {
         Status::PingProxy => println!("pinging proxy server..."),
-        Status::Working { .. } => println!("in progress..."),
+        Status::Working => println!("in progress..."),
         Status::Epilogue => println!("all done."),
         Status::Failed => println!("failed!"),
     }
@@ -124,13 +134,16 @@ fn draw_progress(state: &mut State) {
     print!("latest: ");
     if let Some(update) = state.latest_update() {
         match update {
-            Update::ProxyPingFail => println!("unable to access proxy server"),
+            Err(UpdateErr::ProxyPing) => println!("unable to access proxy server."),
+            Ok(UpdateOk::ProxyPing) => println!("proxy server working."),
 
-            Update::FetchUrlSuccess { date } => println!("{} | found image url.", date),
-            Update::FetchImageSuccess { date } => {
+            Err(UpdateErr::FetchUrl { date }) => println!("{} | failed to find image url.", date),
+
+            Ok(UpdateOk::FetchUrl { date }) => println!("{} | found image url.", date),
+            Ok(UpdateOk::FetchImage { date }) => {
                 println!("{} | downloaded image.", date)
             }
-            Update::SaveImageSuccess { date } => println!("{} | saved image.", date),
+            Ok(UpdateOk::SaveImage { date }) => println!("{} | saved image.", date),
         }
     } else {
         println!("-")

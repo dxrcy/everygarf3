@@ -10,6 +10,7 @@ mod controller;
 
 use std::fs;
 use std::path::Path;
+use std::process::ExitCode;
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
@@ -22,7 +23,16 @@ use tokio::sync::mpsc;
 use crate::args::{Args, defaults};
 use crate::io::{create_target_directory, get_target_directory};
 
-fn main() -> Result<()> {
+fn main() -> ExitCode {
+    if let Err(error) = run() {
+        eprintln!("{}", error);
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    }
+}
+
+fn run() -> Result<()> {
     let args = Args::parse();
 
     if let Some(option) = check_unimplemented_args(&args) {
@@ -84,10 +94,10 @@ fn main() -> Result<()> {
         .build()
         .expect("Failed to build request client (initial). This error should never occur.");
 
-    let (tx, rx) = mpsc::channel(args.job_count.into());
+    let (tx, mut rx) = mpsc::channel(args.job_count.into());
 
     Runtime::new().unwrap().block_on(async move {
-        tokio::spawn(async move {
+        let downloader_handle = tokio::spawn(async move {
             if controller::check_proxy(&tx, &client_initial, proxy.as_ref())
                 .await
                 .is_err()
@@ -108,10 +118,19 @@ fn main() -> Result<()> {
             .download_pending_images()
             .await;
         });
-        controller::draw_progress_loop(rx, pending_count).await;
-    });
 
-    Ok(())
+        if controller::draw_progress_loop(&mut rx, pending_count)
+            .await
+            .is_err()
+        {
+            downloader_handle.abort();
+            // Wait for any additional messages, to prevent sender panicking
+            while let Some(_) = rx.recv().await {}
+            bail!("failed");
+        }
+
+        Ok(())
+    })
 }
 
 pub fn get_existing_dates(directory: impl AsRef<Path>) -> Result<Vec<NaiveDate>> {
