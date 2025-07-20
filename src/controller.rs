@@ -11,7 +11,7 @@ use crate::download::{DownloadOptions, download_image};
 use crate::state::{State, Status, Update, UpdateSuccess, UpdateWarning};
 
 pub struct Downloader {
-    pub tx: mpsc::Sender<Result<Update>>,
+    pub tx: Sender,
     pub pending_dates: Vec<NaiveDate>,
     pub client: Client,
     pub directory: PathBuf,
@@ -21,24 +21,34 @@ pub struct Downloader {
     pub proxy: Option<Url>,
 }
 
-pub async fn check_proxy(
-    tx: &mpsc::Sender<Result<Update>>,
-    client: &Client,
-    proxy: Option<&Url>,
-) -> Result<(), ()> {
-    let Some(proxy) = proxy else {
-        return Ok(());
-    };
+#[derive(Clone)]
+pub struct Sender {
+    tx: mpsc::Sender<Result<Update>>,
+}
 
-    if let Err(_error) = try_ping(client, proxy.clone()).await {
-        tx.send(Err(anyhow!("failed to access proxy server")))
+impl Sender {
+    pub fn new(tx: mpsc::Sender<Result<Update>>) -> Self {
+        Self { tx }
+    }
+
+    pub async fn send_success(&self, success: UpdateSuccess) {
+        self.send(Ok(Ok(success))).await;
+    }
+
+    pub async fn send_warning(&self, warning: UpdateWarning) {
+        self.send(Ok(Err(warning))).await;
+    }
+
+    pub async fn send_error(&self, error: anyhow::Error) {
+        self.send(Err(error)).await;
+    }
+
+    async fn send(&self, result: Result<Update>) {
+        self.tx
+            .send(result)
             .await
-            .unwrap();
-        return Err(());
-    };
-
-    tx.send(Ok(Ok(UpdateSuccess::ProxyPing))).await.unwrap();
-    Ok(())
+            .expect("Failed to send message to main task");
+    }
 }
 
 impl Downloader {
@@ -56,7 +66,7 @@ impl Downloader {
 
             async move {
                 if let Err(error) = download_image(&tx, options).await {
-                    tx.send(Err(error)).await.unwrap();
+                    tx.send_error(error).await;
                 };
                 Ok(())
             }
@@ -171,6 +181,21 @@ fn draw_progress(state: &mut State) {
     } else {
         println!("...")
     }
+}
+
+pub async fn check_proxy(tx: &Sender, client: &Client, proxy: Option<&Url>) -> Result<(), ()> {
+    let Some(proxy) = proxy else {
+        return Ok(());
+    };
+
+    if let Err(_error) = try_ping(client, proxy.clone()).await {
+        tx.send_error(anyhow!("failed to access proxy server"))
+            .await;
+        return Err(());
+    };
+
+    tx.send_success(UpdateSuccess::ProxyPing).await;
+    Ok(())
 }
 
 async fn try_ping(client: &Client, proxy: Url) -> reqwest::Result<()> {

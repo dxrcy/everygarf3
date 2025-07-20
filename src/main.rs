@@ -16,6 +16,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use clap::Parser;
+use controller::Sender;
 use reqwest::Client;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
@@ -25,7 +26,7 @@ use crate::io::{create_target_directory, get_target_directory};
 
 fn main() -> ExitCode {
     if let Err(error) = run() {
-        eprintln!("{}", error);
+        eprintln!("failed: {}", error);
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
@@ -95,6 +96,7 @@ fn run() -> Result<()> {
         .expect("Failed to build request client (initial). This error should never occur.");
 
     let (tx, mut rx) = mpsc::channel(args.job_count.into());
+    let tx = Sender::new(tx);
 
     Runtime::new().unwrap().block_on(async move {
         let downloader_handle = tokio::spawn(async move {

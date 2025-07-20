@@ -8,9 +8,9 @@ use bytes::Bytes;
 use chrono::NaiveDate;
 use everygarf::ImageFormat;
 use reqwest::{Client, Url};
-use tokio::sync::mpsc;
 
-use crate::state::{Update, UpdateSuccess, UpdateWarning};
+use crate::controller::Sender;
+use crate::state::{UpdateSuccess, UpdateWarning};
 
 pub struct DownloadOptions<'a> {
     pub date: NaiveDate,
@@ -21,14 +21,11 @@ pub struct DownloadOptions<'a> {
     pub proxy: Option<&'a Url>,
 }
 
-pub async fn download_image<'a>(
-    tx: &mpsc::Sender<Result<Update>>,
-    options: DownloadOptions<'a>,
-) -> Result<()> {
+pub async fn download_image<'a>(tx: &Sender, options: DownloadOptions<'a>) -> Result<()> {
     let date = options.date;
 
     let image_url = try_attempts(
-        tx,
+        &tx,
         options.max_attempts.into(),
         || fetch_image_url(date, &options.client, options.proxy),
         |attempt, _| UpdateWarning::FetchUrl { attempt, date },
@@ -36,12 +33,10 @@ pub async fn download_image<'a>(
     .await
     .with_context(|| "failed to fetch image url")?;
 
-    tx.send(Ok(Ok(UpdateSuccess::FetchUrl { date })))
-        .await
-        .unwrap();
+    tx.send_success(UpdateSuccess::FetchUrl { date }).await;
 
     let image_bytes = try_attempts(
-        tx,
+        &tx,
         options.max_attempts.into(),
         || fetch_image_bytes(&image_url, &options.client),
         |attempt, _| UpdateWarning::FetchImage { attempt, date },
@@ -49,22 +44,18 @@ pub async fn download_image<'a>(
     .await
     .with_context(|| "failed to fetch image data")?;
 
-    tx.send(Ok(Ok(UpdateSuccess::FetchImage { date })))
-        .await
-        .unwrap();
+    tx.send_success(UpdateSuccess::FetchImage { date }).await;
 
     save_image(date, image_bytes, options.directory, options.image_format)
         .with_context(|| "failed to save image")?;
 
-    tx.send(Ok(Ok(UpdateSuccess::SaveImage { date })))
-        .await
-        .unwrap();
+    tx.send_success(UpdateSuccess::SaveImage { date }).await;
 
     Ok(())
 }
 
 async fn try_attempts<F, R, T, W>(
-    tx: &mpsc::Sender<Result<Update>>,
+    tx: &Sender,
     attempts: usize,
     mut func: F,
     mut warning: W,
@@ -78,15 +69,9 @@ where
     let mut i = 0;
     loop {
         match func().await {
-            Ok(ok) => {
-                return Ok(ok);
-            }
-            Err(error) if i < attempts => {
-                tx.send(Ok(Err(warning(i, error)))).await.unwrap();
-            }
-            Err(error) => {
-                return Err(error);
-            }
+            Ok(ok) => return Ok(ok),
+            Err(error) if i < attempts => tx.send_warning(warning(i, error)).await,
+            Err(error) => return Err(error),
         }
         i += 1;
     }
