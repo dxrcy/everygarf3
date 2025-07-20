@@ -14,9 +14,13 @@ pub struct State {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Status {
+    // Prologue
     PingProxy,
+    FetchCache,
+    // Main download
     Working,
-    Epilogue,
+    // Epilogue
+    Complete,
     Failed,
 }
 
@@ -24,11 +28,15 @@ pub type Update = Result<UpdateSuccess, UpdateWarning>;
 
 #[derive(Clone, Copy, Debug)]
 pub enum UpdateSuccess {
+    // Prologue
     ProxyPing,
-
+    FetchCache,
+    // Main download
     FetchUrl { date: NaiveDate },
     FetchImage { date: NaiveDate },
     SaveImage { date: NaiveDate },
+    // Epilogue
+    Complete,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -51,15 +59,6 @@ impl State {
         }
     }
 
-    pub fn advance_status(&mut self) {
-        match self.status {
-            Status::PingProxy => self.status = Status::Working,
-            Status::Working => self.status = Status::Epilogue,
-            Status::Epilogue => (),
-            Status::Failed => (),
-        }
-    }
-
     pub fn set_failed(&mut self) {
         self.status = Status::Failed;
         self.latest_success = None;
@@ -69,8 +68,15 @@ impl State {
         match update {
             Ok(success) => {
                 self.latest_success = Some(success);
-                if let UpdateSuccess::SaveImage { .. } = success {
-                    self.increase_complete_units();
+                match success {
+                    UpdateSuccess::ProxyPing => self.status = Status::FetchCache,
+                    UpdateSuccess::FetchCache => self.status = Status::Working,
+                    UpdateSuccess::Complete => self.status = Status::Complete,
+
+                    UpdateSuccess::SaveImage { .. } => {
+                        self.increase_complete_units();
+                    }
+                    _ => (),
                 }
             }
             Err(warning) => {

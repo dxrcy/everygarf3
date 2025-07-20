@@ -17,6 +17,7 @@ use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use clap::Parser;
 use controller::Sender;
+use everygarf::DateUrl;
 use reqwest::Client;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
@@ -48,12 +49,10 @@ fn run() -> Result<()> {
             .with_context(|| "failed to find appropriate target directory path")?,
     };
 
-    create_target_directory(&directory, args.remove_all)
-        .with_context(|| "failed to create/clear target directory")?;
-
     let date_start = args.start_date.unwrap_or(dates::FIRST_DATE);
     let date_end = dates::latest();
 
+    // TODO(refactor): Extract as function
     if date_start < dates::FIRST_DATE {
         bail!(
             "Start date ({}) must not be before date of first comic ({})",
@@ -69,22 +68,44 @@ fn run() -> Result<()> {
         );
     }
 
+    let request_timeout_primary = Duration::from_secs(args.timeout_primary.into());
+    let request_timeout_initial = Duration::from_secs(args.timeout_initial.into());
+
+    // TODO(refactor): Rename `proxy_url`, `args.proxy_url`, `args.cache_url`
+    let proxy = Some(args.proxy).filter(|_| !args.no_proxy);
+
+    let cache_url = if args.no_cache {
+        None
+    } else {
+        // TODO(feat): Handle better
+        let cache_url = args
+            .cache
+            .to_str()
+            .with_context(|| "converting cache path to string")?;
+        let cache_url = reqwest::Url::parse(cache_url).with_context(
+            || "parsing cache url. reading cache from a local file is not yet implemented",
+        )?;
+        Some(cache_url)
+    };
+
+    create_target_directory(&directory, args.remove_all)
+        .with_context(|| "failed to create/clear target directory")?;
+
     let existing_dates = get_existing_dates(&directory)?;
 
-    let missing_dates =
-        dates::date_iter(date_start..=date_end).filter(|date| !existing_dates.contains(date));
+    let missing_dates = dates::date_iter(date_start..=date_end)
+        .filter(|date| !existing_dates.contains(date))
+        .map(|date| DateUrl {
+            date,
+            image_url: None,
+        });
 
     // Must be collected to get count initially
-    let pending_dates: Vec<_> = match args.max_images {
+    let mut pending_dates: Vec<DateUrl> = match args.max_images {
         Some(max_images) => missing_dates.take(max_images.into()).collect(),
         None => missing_dates.collect(),
     };
     let pending_count = pending_dates.len();
-
-    let request_timeout_primary = Duration::from_secs(args.timeout_primary.into());
-    let request_timeout_initial = Duration::from_secs(args.timeout_initial.into());
-
-    let proxy = Some(args.proxy).filter(|_| !args.no_proxy);
 
     let client_primary = Client::builder()
         .user_agent(&args.user_agent)
@@ -101,13 +122,24 @@ fn run() -> Result<()> {
     let tx = Sender::new(tx);
 
     Runtime::new().unwrap().block_on(async move {
+        // TODO(refactor): Rename task to `worker` in all contexts
         let downloader_handle = tokio::spawn(async move {
-            if controller::check_proxy(&tx, &client_initial, proxy.as_ref())
+            if download::check_proxy(&tx, &client_initial, proxy.as_ref())
                 .await
                 .is_err()
             {
                 return;
             };
+
+            if let Some(cache_url) = cache_url {
+                let mut cache_data = download::fetch_cached_urls(&tx, &client_initial, cache_url)
+                    .await
+                    .unwrap();
+                // Assumes `pending_dates` has no duplicates (which it shouldn't)
+                for date_url in &mut pending_dates {
+                    date_url.image_url = cache_data.remove(&date_url.date);
+                }
+            }
 
             controller::Downloader {
                 tx,
@@ -128,6 +160,11 @@ fn run() -> Result<()> {
             // Wait for any additional messages, to prevent sender panicking
             while rx.recv().await.is_some() {}
             return Err(error);
+        }
+
+        // TODO(feat): Handle better
+        if let Err(error) = downloader_handle.await {
+            panic!("{}", error);
         }
 
         Ok(())
@@ -159,12 +196,6 @@ fn check_unimplemented_args(args: &Args) -> Option<&'static str> {
     }
     if args.notify_on_fail {
         return Some("--notify-on-fail");
-    }
-    if args.cache != Path::new(defaults::CACHE) {
-        return Some("--cache");
-    }
-    if args.no_cache {
-        return Some("--no-cache");
     }
     if args.save_cache.is_some() {
         return Some("--save-cache");

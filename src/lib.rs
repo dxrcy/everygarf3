@@ -1,6 +1,8 @@
 use std::fmt;
 
+use chrono::NaiveDate;
 use clap::ValueEnum;
+use reqwest::Url;
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum Source {
@@ -26,4 +28,10 @@ impl fmt::Display for ImageFormat {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.to_possible_value().unwrap().get_name())
     }
+}
+
+#[derive(Debug)]
+pub struct DateUrl {
+    pub date: NaiveDate,
+    pub image_url: Option<Url>,
 }

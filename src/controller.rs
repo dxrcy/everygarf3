@@ -1,8 +1,8 @@
 use std::num::NonZero;
 use std::path::PathBuf;
 
-use anyhow::{Result, anyhow};
-use chrono::NaiveDate;
+use anyhow::Result;
+use everygarf::DateUrl;
 use futures::StreamExt as _;
 use reqwest::{Client, Url};
 use tokio::sync::mpsc;
@@ -12,7 +12,7 @@ use crate::state::{State, Status, Update, UpdateSuccess, UpdateWarning};
 
 pub struct Downloader {
     pub tx: Sender,
-    pub pending_dates: Vec<NaiveDate>,
+    pub pending_dates: Vec<DateUrl>,
     pub client: Client,
     pub directory: PathBuf,
     pub job_count: NonZero<usize>,
@@ -53,10 +53,10 @@ impl Sender {
 
 impl Downloader {
     pub async fn download_pending_images(self) {
-        let futures = self.pending_dates.into_iter().map(|date| {
+        let futures = self.pending_dates.into_iter().map(|date_url| {
             let tx = self.tx.clone();
             let options = DownloadOptions {
-                date,
+                date_url,
                 client: self.client.clone(),
                 directory: &self.directory,
                 max_attempts: self.max_attempts,
@@ -91,7 +91,6 @@ pub async fn draw_progress_loop(
     let mut state = State::new(pending_count);
 
     draw_progress(&mut state, false);
-    state.advance_status();
 
     while let Some(msg) = rx.recv().await {
         match msg {
@@ -107,8 +106,9 @@ pub async fn draw_progress_loop(
         }
     }
 
-    state.advance_status();
+    state.update(Ok(UpdateSuccess::Complete));
     draw_progress(&mut state, true);
+
     Ok(())
 }
 
@@ -150,24 +150,33 @@ fn draw_progress(state: &mut State, concise: bool) {
     print!(" status: ");
     match state.status() {
         Status::PingProxy => println!("pinging proxy server..."),
+        Status::FetchCache => println!("downloading url cache..."),
         Status::Working => println!("in progress..."),
-        Status::Epilogue => println!("all done."),
+        Status::Complete => println!("all done."),
         Status::Failed => println!("failed!"),
     }
 
     print!(" latest: ");
-    if let Some(success) = state.latest_success() {
-        match success {
-            UpdateSuccess::ProxyPing => println!("proxy server working."),
+    match state.latest_success() {
+        None => println!("started."),
 
-            UpdateSuccess::FetchUrl { date } => println!("{} | fetched image url.", date),
-            UpdateSuccess::FetchImage { date } => {
-                println!("{} | downloaded image.", date)
-            }
-            UpdateSuccess::SaveImage { date } => println!("{} | saved image.", date),
+        Some(UpdateSuccess::ProxyPing) => println!("proxy server working."),
+        Some(UpdateSuccess::FetchCache) => println!("downloaded url cache."),
+
+        Some(UpdateSuccess::FetchUrl { date }) => println!("{} | fetched image url.", date),
+        Some(UpdateSuccess::FetchImage { date }) => {
+            println!("{} | downloaded image.", date)
         }
-    } else {
-        println!("...")
+        Some(UpdateSuccess::SaveImage { date }) => println!("{} | saved image.", date),
+
+        Some(success) => {
+            // Soft unreachable
+            debug_assert!(
+                !matches!(success, UpdateSuccess::Complete),
+                "if recieved `Complete` message, display should from now on be `concise`",
+            );
+            println!();
+        }
     }
 
     if let Some(warning) = state.latest_warning() {
@@ -186,24 +195,4 @@ fn draw_progress(state: &mut State, concise: bool) {
     } else {
         println!();
     }
-}
-
-pub async fn check_proxy(tx: &Sender, client: &Client, proxy: Option<&Url>) -> Result<(), ()> {
-    let Some(proxy) = proxy else {
-        return Ok(());
-    };
-
-    if let Err(_error) = try_ping(client, proxy.clone()).await {
-        tx.send_error(anyhow!("failed to access proxy server"))
-            .await;
-        return Err(());
-    };
-
-    tx.send_success(UpdateSuccess::ProxyPing).await;
-    Ok(())
-}
-
-async fn try_ping(client: &Client, proxy: Url) -> reqwest::Result<()> {
-    client.get(proxy).send().await?.error_for_status()?;
-    Ok(())
 }
