@@ -20,11 +20,14 @@ pub enum Status {
 
 #[derive(Clone, Copy, Debug)]
 pub enum Update {
-    ProxyPing,
+    ProxyPingOk,
 
-    FetchUrl { date: NaiveDate },
-    FetchImage { date: NaiveDate },
-    SaveImage { date: NaiveDate },
+    FetchUrlOk { date: NaiveDate },
+    FetchImageOk { date: NaiveDate },
+    SaveImageOk { date: NaiveDate },
+
+    FetchUrlWarning { attempt: usize, date: NaiveDate },
+    FetchImageWarning { attempt: usize, date: NaiveDate },
 }
 
 impl State {
@@ -56,7 +59,7 @@ impl State {
     pub fn update(&mut self, update: Update) {
         self.latest_update = Some(update);
 
-        if let Update::SaveImage { .. } = update {
+        if let Update::SaveImageOk { .. } = update {
             self.increase_complete_units();
         }
     }

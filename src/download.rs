@@ -25,46 +25,62 @@ pub async fn download_image<'a>(
     tx: &mpsc::Sender<Result<Update>>,
     options: DownloadOptions<'a>,
 ) -> Result<()> {
-    // TODO(feat): Add error contexts
-
     let date = options.date;
 
-    let image_url = try_attempts(options.max_attempts.into(), || {
-        fetch_image_url(date, &options.client, options.proxy)
-    })
+    let image_url = try_attempts(
+        tx,
+        options.max_attempts.into(),
+        || fetch_image_url(date, &options.client, options.proxy),
+        |attempt, _| Update::FetchUrlWarning { attempt, date },
+    )
     .await
     .with_context(|| "failed to fetch image url")?;
 
-    tx.send(Ok(Update::FetchUrl { date })).await.unwrap();
+    tx.send(Ok(Update::FetchUrlOk { date })).await.unwrap();
 
-    let image_bytes = try_attempts(options.max_attempts.into(), || {
-        fetch_image_bytes(&image_url, &options.client)
-    })
+    let image_bytes = try_attempts(
+        tx,
+        options.max_attempts.into(),
+        || fetch_image_bytes(&image_url, &options.client),
+        |attempt, _| Update::FetchImageWarning { attempt, date },
+    )
     .await
     .with_context(|| "failed to fetch image data")?;
 
-    tx.send(Ok(Update::FetchImage { date })).await.unwrap();
+    tx.send(Ok(Update::FetchImageOk { date })).await.unwrap();
 
     save_image(date, image_bytes, options.directory, options.image_format)
         .with_context(|| "failed to save image")?;
 
-    tx.send(Ok(Update::SaveImage { date })).await.unwrap();
+    tx.send(Ok(Update::SaveImageOk { date })).await.unwrap();
 
     Ok(())
 }
 
-async fn try_attempts<F, T, E, R>(attempts: usize, mut func: F) -> Result<T, E>
+async fn try_attempts<F, R, T, W>(
+    tx: &mpsc::Sender<Result<Update>>,
+    attempts: usize,
+    mut func: F,
+    mut warning: W,
+) -> Result<T>
 where
     F: FnMut() -> R,
-    R: Future<Output = Result<T, E>>,
+    R: Future<Output = Result<T>>,
+    W: FnMut(usize, anyhow::Error) -> Update,
 {
     assert!(attempts > 0);
     let mut i = 0;
     loop {
         match func().await {
-            Ok(ok) => return Ok(ok),
-            Err(err) if i >= attempts => return Err(err),
-            _ => (),
+            Ok(ok) => {
+                return Ok(ok);
+            }
+            Err(error) if i < attempts => {
+                tx.send(Ok(warning(i, error))).await.unwrap();
+            }
+            Err(error) => {
+                return Err(error);
+            }
         }
         i += 1;
     }

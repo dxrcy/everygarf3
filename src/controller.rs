@@ -37,7 +37,7 @@ pub async fn check_proxy(
         return Err(());
     };
 
-    tx.send(Ok(Update::ProxyPing)).await.unwrap();
+    tx.send(Ok(Update::ProxyPingOk)).await.unwrap();
     Ok(())
 }
 
@@ -143,13 +143,26 @@ fn draw_progress(state: &mut State) {
     print!("latest: ");
     if let Some(update) = state.latest_update() {
         match update {
-            Update::ProxyPing => println!("proxy server working."),
+            Update::ProxyPingOk => println!("proxy server working."),
 
-            Update::FetchUrl { date } => println!("{} | found image url.", date),
-            Update::FetchImage { date } => {
+            Update::FetchUrlOk { date } => println!("{} | fetched image url.", date),
+            Update::FetchImageOk { date } => {
                 println!("{} | downloaded image.", date)
             }
-            Update::SaveImage { date } => println!("{} | saved image.", date),
+            Update::SaveImageOk { date } => println!("{} | saved image.", date),
+
+            Update::FetchUrlWarning { attempt, date } => {
+                println!(
+                    "{} | (warning) failed to fetch image url (attempt {}).",
+                    date, attempt
+                )
+            }
+            Update::FetchImageWarning { attempt, date } => {
+                println!(
+                    "{} | (warning) failed to download image (attempt {}).",
+                    date, attempt
+                )
+            }
         }
     } else {
         println!("...")
