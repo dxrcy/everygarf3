@@ -17,12 +17,12 @@ use anyhow::{Context, Result, bail};
 use chrono::NaiveDate;
 use clap::Parser;
 use controller::Sender;
-use everygarf::DateUrl;
+use everygarf::{DateUrl, UrlPath};
 use reqwest::Client;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
 
-use crate::args::{Args, defaults};
+use crate::args::Args;
 use crate::io::{create_target_directory, get_target_directory};
 
 fn main() -> ExitCode {
@@ -77,15 +77,7 @@ fn run() -> Result<()> {
     let cache_url = if args.no_cache {
         None
     } else {
-        // TODO(feat): Handle better
-        let cache_url = args
-            .cache
-            .to_str()
-            .with_context(|| "converting cache path to string")?;
-        let cache_url = reqwest::Url::parse(cache_url).with_context(
-            || "parsing cache url. reading cache from a local file is not yet implemented",
-        )?;
-        Some(cache_url)
+        Some(UrlPath::from(args.cache).with_context(|| "parsing cache url")?)
     };
 
     create_target_directory(&directory, args.remove_all)
@@ -107,6 +99,11 @@ fn run() -> Result<()> {
     };
     let pending_count = pending_dates.len();
 
+    if pending_dates.is_empty() {
+        println!("nothing to do!");
+        return Ok(());
+    }
+
     let client_primary = Client::builder()
         .user_agent(&args.user_agent)
         .timeout(request_timeout_primary)
@@ -124,6 +121,7 @@ fn run() -> Result<()> {
     Runtime::new().unwrap().block_on(async move {
         // TODO(refactor): Rename task to `worker` in all contexts
         let downloader_handle = tokio::spawn(async move {
+            // TODO(feat): Skip ping for low image count
             if download::check_proxy(&tx, &client_initial, proxy.as_ref())
                 .await
                 .is_err()
@@ -190,9 +188,6 @@ fn get_filename_date(path: impl AsRef<Path>) -> Option<NaiveDate> {
 fn check_unimplemented_args(args: &Args) -> Option<&'static str> {
     if args.file_tree {
         return Some("--tree");
-    }
-    if args.timeout_initial != defaults::TIMEOUT_INITIAL {
-        return Some("--initial-timeout");
     }
     if args.notify_on_fail {
         return Some("--notify-on-fail");

@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Context as _, Result, anyhow};
 use bytes::Bytes;
 use chrono::NaiveDate;
-use everygarf::{DateUrl, ImageFormat};
+use everygarf::{DateUrl, ImageFormat, UrlPath};
 use reqwest::{Client, Url};
 
 use crate::controller::Sender;
@@ -42,9 +42,18 @@ pub async fn check_proxy(tx: &Sender, client: &Client, proxy: Option<&Url>) -> R
     Ok(())
 }
 
-pub async fn fetch_cached_urls(tx: &Sender, client: &Client, cache_url: Url) -> Result<CacheData> {
-    // TODO(feat): Support path to local file
-    let text = fetch_text(client, cache_url).await?;
+pub async fn fetch_cached_urls(
+    tx: &Sender,
+    client: &Client,
+    cache_url: UrlPath,
+) -> Result<CacheData> {
+    // TODO(opt): Parse from stream
+    let text = match cache_url {
+        UrlPath::Remote(url) => fetch_text(client, url)
+            .await
+            .with_context(|| "fetching file")?,
+        UrlPath::Local(path) => fs::read_to_string(path).with_context(|| "reading file")?,
+    };
     let cache_data = parse_cached_urls(&text).with_context(|| "malformed cache file");
     tx.send_success(UpdateSuccess::FetchCache).await;
     cache_data

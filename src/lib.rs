@@ -1,5 +1,7 @@
 use std::fmt;
+use std::path::PathBuf;
 
+use anyhow::{Context as _, Result};
 use chrono::NaiveDate;
 use clap::ValueEnum;
 use reqwest::Url;
@@ -34,4 +36,26 @@ impl fmt::Display for ImageFormat {
 pub struct DateUrl {
     pub date: NaiveDate,
     pub image_url: Option<Url>,
+}
+
+// TODO(refactor) Rename!!
+pub enum UrlPath {
+    Remote(Url),
+    Local(PathBuf),
+}
+
+impl UrlPath {
+    pub fn from(path: PathBuf) -> Result<Self> {
+        let string = path.to_str().with_context(|| "converting path to string")?;
+        if is_remote_url(string) {
+            let url = reqwest::Url::parse(string).with_context(|| "parsing remote url")?;
+            Ok(Self::Remote(url))
+        } else {
+            Ok(Self::Local(path))
+        }
+    }
+}
+
+fn is_remote_url(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
 }

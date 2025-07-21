@@ -119,8 +119,14 @@ fn draw_progress(state: &mut State, concise: bool) {
     let current = state.completed_units();
     let total = state.total_units();
 
-    let percent = current as f32 * 100.0 / total as f32;
-    let bar_progress = current * bar_width / total;
+    let (percent, bar_progress) = if total == 0 {
+        (100.0, bar_width)
+    } else {
+        (
+            current as f32 * 100.0 / total as f32,
+            current * bar_width / total,
+        )
+    };
 
     if !state.record_draw() {
         for _ in 0..line_count {
