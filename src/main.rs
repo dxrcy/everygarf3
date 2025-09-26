@@ -129,7 +129,12 @@ fn run() -> Result<()> {
                 return;
             };
 
+            if args.query {
+                return;
+            }
+
             if let Some(cache_url) = cache_url {
+                // TODO(feat): Handle error
                 let mut cache_data = download::fetch_cached_urls(&tx, &client_initial, cache_url)
                     .await
                     .unwrap();
@@ -194,9 +199,6 @@ fn check_unimplemented_args(args: &Args) -> Option<&'static str> {
     }
     if args.save_cache.is_some() {
         return Some("--save-cache");
-    }
-    if args.query {
-        return Some("--query");
     }
     None
 }

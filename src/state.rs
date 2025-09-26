@@ -24,7 +24,10 @@ pub enum Status {
     Failed,
 }
 
-pub type Update = Result<UpdateSuccess, UpdateWarning>;
+pub enum Update {
+    Success(UpdateSuccess),
+    Warning(UpdateWarning),
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum UpdateSuccess {
@@ -66,7 +69,7 @@ impl State {
 
     pub fn update(&mut self, update: Update) {
         match update {
-            Ok(success) => {
+            Update::Success(success) => {
                 self.latest_success = Some(success);
                 match success {
                     UpdateSuccess::ProxyPing => self.status = Status::FetchCache,
@@ -79,7 +82,7 @@ impl State {
                     _ => (),
                 }
             }
-            Err(warning) => {
+            Update::Warning(warning) => {
                 self.latest_warning = Some(warning);
             }
         }

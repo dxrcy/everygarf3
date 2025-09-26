@@ -32,11 +32,11 @@ impl Sender {
     }
 
     pub async fn send_success(&self, success: UpdateSuccess) {
-        self.send(Ok(Ok(success))).await;
+        self.send(Ok(Update::Success(success))).await;
     }
 
     pub async fn send_warning(&self, warning: UpdateWarning) {
-        self.send(Ok(Err(warning))).await;
+        self.send(Ok(Update::Warning(warning))).await;
     }
 
     pub async fn send_error(&self, error: anyhow::Error) {
@@ -106,7 +106,7 @@ pub async fn draw_progress_loop(
         }
     }
 
-    state.update(Ok(UpdateSuccess::Complete));
+    state.update(Update::Success(UpdateSuccess::Complete));
     draw_progress(&mut state, true);
 
     Ok(())
@@ -166,22 +166,25 @@ fn draw_progress(state: &mut State, concise: bool) {
     match state.latest_success() {
         None => println!("started."),
 
-        Some(UpdateSuccess::ProxyPing) => println!("proxy server working."),
-        Some(UpdateSuccess::FetchCache) => println!("downloaded url cache."),
+        Some(UpdateSuccess::ProxyPing) => {
+            println!("proxy server working.");
+        }
+        Some(UpdateSuccess::FetchCache) => {
+            println!("downloaded url cache.");
+        }
 
-        Some(UpdateSuccess::FetchUrl { date }) => println!("{} | fetched image url.", date),
+        Some(UpdateSuccess::FetchUrl { date }) => {
+            println!("{} | fetched image url.", date);
+        }
         Some(UpdateSuccess::FetchImage { date }) => {
             println!("{} | downloaded image.", date)
         }
-        Some(UpdateSuccess::SaveImage { date }) => println!("{} | saved image.", date),
+        Some(UpdateSuccess::SaveImage { date }) => {
+            println!("{} | saved image.", date);
+        }
 
-        Some(success) => {
-            // Soft unreachable
-            debug_assert!(
-                !matches!(success, UpdateSuccess::Complete),
-                "if recieved `Complete` message, display should from now on be `concise`",
-            );
-            println!();
+        Some(UpdateSuccess::Complete) => {
+            unreachable!("if recieved `Complete` message, display should from now on be `concise`");
         }
     }
 
@@ -191,11 +194,16 @@ fn draw_progress(state: &mut State, concise: bool) {
             UpdateWarning::FetchUrl { attempt, date } => {
                 println!(
                     "{} | failed to fetch image url (attempt {}).",
-                    date, attempt
-                )
+                    date,
+                    attempt + 1,
+                );
             }
             UpdateWarning::FetchImage { attempt, date } => {
-                println!("{} | failed to download image (attempt {}).", date, attempt)
+                println!(
+                    "{} | failed to download image (attempt {}).",
+                    date,
+                    attempt + 1,
+                );
             }
         }
     } else {
